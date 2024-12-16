@@ -1,3 +1,6 @@
+# Data files that are a bit big for the repository
+data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -123,6 +126,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env312
 .venv
 env/
 venv/

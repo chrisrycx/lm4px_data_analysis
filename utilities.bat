@@ -1,0 +1,1 @@
+7z e your-archive.zip -o C:\path\to\extract\folder
