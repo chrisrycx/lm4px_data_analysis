@@ -4,6 +4,7 @@ token.json
 
 # vscode
 .vscode/
+*.code-workspace
 
 # Data files that are a bit big for the repository
 data/
