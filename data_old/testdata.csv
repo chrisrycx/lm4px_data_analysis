@@ -1,9 +1,0 @@
-#
-# Unused header rows
-#
-id,name,age,city,score
-1,John Doe,28,New York,85
-2,Jane Smith,34,Los Angeles,90
-3,Emily Davis,22,Chicago,78
-4,Michael Brown,45,Houston,92
-5,Jessica Wilson,30,Phoenix,88
