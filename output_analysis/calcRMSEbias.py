@@ -40,14 +40,53 @@ version = code_parts[2][1:]
 with open(sites_file, 'r') as f:
     sites = [line.strip() for line in f if line.strip()]
 
-# Initialize an empty DataFrame to store results
-results = pd.DataFrame(columns=['site', 'bias', 'rmse'])
+# Initialize a list to store results
+results_list = []
 
 # Loop through each site and calculate RMSE and bias
 for site in sites:
     model_site_name = site.replace(' ', '').replace('#', '').lower()
     model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
-    snotel_data = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
+    snotel = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
+    snotel.load_data()
     
+    # Get just the SWE data
+    model_swe = model_results.get_data(['snow'], 'land_daily')
+    snotel_swe = snotel.data['swe_mm']
+    snotel_swe.index = snotel_swe.index.tz_localize(None)
+    snotel_swe.index = snotel_swe.index + pd.Timedelta(hours=12)  # Adjust SNOTEL data to match model time
 
+    # Merge model and SNOTEL data on index
+    snow_data = pd.merge(
+        model_swe,
+        snotel_swe,
+        how='left',
+        left_index=True, right_index=True
+    ).dropna()
 
+    # Calculate RMSE and bias
+    if not snow_data.empty:
+        rmse = ((snow_data['snow'] - snow_data['swe_mm']) ** 2).mean() ** 0.5
+        bias = (snow_data['snow'] - snow_data['swe_mm']).mean()
+    else:
+        rmse = None
+        bias = None
+
+    # Append results to the list
+    results_list.append({
+        'site': site,
+        'latitude': snotel.latitude,
+        'longitude': snotel.longitude,
+        'bias': round(bias, 1) if bias is not None else None,
+        'rmse': round(rmse, 1) if rmse is not None else None
+    })
+
+    # Close the objects to free resources
+    model_results.close()
+
+# Convert results list to DataFrame
+results = pd.DataFrame(results_list)
+print(results.head())
+
+# Save results to CSV
+results.to_csv(f'{sites_file[:-4]}_{folder_code}.csv', index=False)
