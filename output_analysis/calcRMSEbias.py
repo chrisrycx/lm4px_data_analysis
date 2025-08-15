@@ -89,5 +89,6 @@ for site in sites:
 results = pd.DataFrame(results_list)
 print(results.head())
 
-# Save results to CSV
-results.to_csv(f'{sites_file[:-4]}_{folder_code}.csv', index=False)
+# Save results to CSV in the current directory, removing any path from sites_file
+base_sites_file = os.path.splitext(os.path.basename(sites_file))[0]
+results.to_csv(f'{base_sites_file[:-4]}_{folder_code}.csv', index=False)
