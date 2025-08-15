@@ -45,6 +45,7 @@ results_list = []
 
 # Loop through each site and calculate RMSE and bias
 for site in sites:
+    print(f'Processing site {site}')
     model_site_name = site.replace(' ', '').replace('#', '').lower()
     model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
     snotel = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
