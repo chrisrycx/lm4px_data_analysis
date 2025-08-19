@@ -91,4 +91,4 @@ print(results.head())
 
 # Save results to CSV in the current directory, removing any path from sites_file
 base_sites_file = os.path.splitext(os.path.basename(sites_file))[0]
-results.to_csv(f'{base_sites_file[:-4]}_{folder_code}.csv', index=False)
+results.to_csv(f'{base_sites_file}_{folder_code}.csv', index=False)
