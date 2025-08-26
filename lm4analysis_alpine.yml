@@ -1,0 +1,17 @@
+# Environment configuration for LM4 analysis
+# Will also need to install buildforcing and model_datasets packages separately
+# using pip install <path-to-repo>
+name: lm4analysis
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13
+  - numpy
+  - pandas
+  - xarray
+  - matplotlib
+variables:
+  OUTPUT_PATH: /projects/ccox1@xsede.org/lm4px_modelling/output
+  SNOTEL_PATH: /projects/ccox1@xsede.org/data/snotel
+  FORCING_PATH: /projects/ccox1@xsede.org/data/forcing
