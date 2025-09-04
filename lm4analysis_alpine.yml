@@ -6,11 +6,12 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.13
+  - python=3.12
   - numpy
   - pandas
   - xarray
   - matplotlib
+  - notebook
 variables:
   OUTPUT_PATH: /projects/ccox1@xsede.org/lm4px_modelling/output
   SNOTEL_PATH: /projects/ccox1@xsede.org/data/snotel
