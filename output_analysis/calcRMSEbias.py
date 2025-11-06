@@ -47,8 +47,13 @@ results_list = []
 for site in sites:
     print(f'Processing site {site}')
     model_site_name = site.replace(' ', '').replace('#', '').lower()
-    model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
-    snotel = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
+    try:
+        model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
+        snotel = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
+    except ValueError as ve:
+        print(f'Site not found:{site}')
+        continue
+        
     snotel.load_data()
     
     # Get just the SWE data
