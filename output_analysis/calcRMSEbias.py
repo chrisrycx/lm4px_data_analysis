@@ -48,7 +48,6 @@ for site in sites:
     print(f'Processing site {site}')
     model_site_name = site.replace(' ', '').replace('#', '').lower()
     try:
-        model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
         snotel = PNNLSnotel(site_name=site, storage_path=SNOTEL_PATH)
     except ValueError as ve:
         print(f'Site not found:{site}')
@@ -56,8 +55,14 @@ for site in sites:
         
     snotel.load_data()
     
-    # Get just the SWE data
-    model_swe = model_results.get_data(['snow'], 'land_daily')
+    # Get just the SWE data from model output
+    try:
+        model_results = LM4ModelOutput(site=model_site_name, forcing_string=forcing_string, namelist=namelist, version=version, spinup=False)
+        model_swe = model_results.get_data(['snow'], 'land_daily')
+    except FileNotFoundError as e:
+        print(f'Error loading model results for site {site}: {e}')
+        continue
+    
     snotel_swe = snotel.data['swe_mm']
     snotel_swe.index = snotel_swe.index.tz_localize(None)
     snotel_swe.index = snotel_swe.index + pd.Timedelta(hours=12)  # Adjust SNOTEL data to match model time
