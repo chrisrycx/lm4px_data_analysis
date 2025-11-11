@@ -70,21 +70,38 @@ for site in sites:
         left_index=True, right_index=True
     ).dropna()
 
+    # Save number of years of data
+    num_years = (snow_data.index[-1] - snow_data.index[0]).days / 365.25
+
     # Calculate RMSE and bias
     if not snow_data.empty:
         rmse = ((snow_data['snow'] - snow_data['swe_mm']) ** 2).mean() ** 0.5
         bias = (snow_data['snow'] - snow_data['swe_mm']).mean()
+
+        # Calculate normalized RMSE and bias
+        mean_snotel_swe = snow_data['swe_mm'].mean()
+        if mean_snotel_swe != 0:
+            nrmse = rmse/mean_snotel_swe
+            nbias = bias/mean_snotel_swe
+        else:
+            nrmse = None
+            nbias = None
     else:
         rmse = None
         bias = None
+        nrmse = None
+        nbias = None
 
     # Append results to the list
     results_list.append({
         'site': site,
         'latitude': snotel.latitude,
         'longitude': snotel.longitude,
+        'output_years': round(num_years, 1),
         'bias': round(bias, 1) if bias is not None else None,
-        'rmse': round(rmse, 1) if rmse is not None else None
+        'rmse': round(rmse, 1) if rmse is not None else None,
+        'nbias': round(nbias, 1) if nbias is not None else None,
+        'nrmse': round(nrmse, 1) if nrmse is not None else None
     })
 
     # Close the objects to free resources
