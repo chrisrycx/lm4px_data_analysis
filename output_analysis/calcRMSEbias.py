@@ -70,6 +70,11 @@ for site in sites:
         left_index=True, right_index=True
     ).dropna()
 
+    # Remove first year of data to avoid spinup effects
+    if not snow_data.empty:
+        start_date = snow_data.index[0] + pd.DateOffset(years=1)
+        snow_data = snow_data[snow_data.index >= start_date]
+
     # Save number of years of data
     num_years = (snow_data.index[-1] - snow_data.index[0]).days / 365.25
 
@@ -100,8 +105,8 @@ for site in sites:
         'output_years': round(num_years, 1),
         'bias': round(bias, 1) if bias is not None else None,
         'rmse': round(rmse, 1) if rmse is not None else None,
-        'nbias': round(nbias, 1) if nbias is not None else None,
-        'nrmse': round(nrmse, 1) if nrmse is not None else None
+        'nbias': round(nbias, 2) if nbias is not None else None,
+        'nrmse': round(nrmse, 2) if nrmse is not None else None
     })
 
     # Close the objects to free resources
