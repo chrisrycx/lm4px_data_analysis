@@ -80,27 +80,18 @@ for site in sites:
         start_date = snow_data.index[0] + pd.DateOffset(years=1)
         snow_data = snow_data[snow_data.index >= start_date]
 
-    # Save number of years of data
+    # Save number of years of data, mean, and variance of SNOTEL SWE
     num_years = (snow_data.index[-1] - snow_data.index[0]).days / 365.25
+    mean_snotel_swe = snow_data['swe_mm'].mean() if not snow_data.empty else None
+    var_snotel_swe = float(snow_data['swe_mm'].var()) if not snow_data.empty else None
 
     # Calculate RMSE and bias
     if not snow_data.empty:
         rmse = ((snow_data['snow'] - snow_data['swe_mm']) ** 2).mean() ** 0.5
         bias = (snow_data['snow'] - snow_data['swe_mm']).mean()
-
-        # Calculate normalized RMSE and bias
-        mean_snotel_swe = snow_data['swe_mm'].mean()
-        if mean_snotel_swe != 0:
-            nrmse = rmse/mean_snotel_swe
-            nbias = bias/mean_snotel_swe
-        else:
-            nrmse = None
-            nbias = None
     else:
         rmse = None
         bias = None
-        nrmse = None
-        nbias = None
 
     # Append results to the list
     results_list.append({
@@ -110,8 +101,8 @@ for site in sites:
         'output_years': round(num_years, 1),
         'bias': round(bias, 1) if bias is not None else None,
         'rmse': round(rmse, 1) if rmse is not None else None,
-        'nbias': round(nbias, 2) if nbias is not None else None,
-        'nrmse': round(nrmse, 2) if nrmse is not None else None
+        'mean_snotel_swe': round(mean_snotel_swe, 1) if mean_snotel_swe is not None else None,
+        'var_snotel_swe': round(var_snotel_swe, 1) if var_snotel_swe is not None else None
     })
 
     # Close the objects to free resources
