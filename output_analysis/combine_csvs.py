@@ -110,6 +110,39 @@ for i, df in enumerate(dfs[1:], start=1):
     # Concatenate horizontally (by index)
     df_combined = pd.concat([df_combined, df_subset], axis=1)
 
+# Calculate differences from baseline (s00000000_ghec)
+print("\nCalculating differences from baseline (s00000000_ghec)...")
+baseline_rmse_col = 'rmse_s00000000_ghec'
+baseline_bias_col = 'bias_s00000000_ghec'
+
+# Check if baseline columns exist
+if baseline_rmse_col not in df_combined.columns:
+    print(f"WARNING: Baseline column '{baseline_rmse_col}' not found. Skipping difference calculations.")
+elif baseline_bias_col not in df_combined.columns:
+    print(f"WARNING: Baseline column '{baseline_bias_col}' not found. Skipping difference calculations.")
+else:
+    # Find all rmse and bias columns
+    all_rmse_cols = [col for col in df_combined.columns if col.startswith('rmse_')]
+    all_bias_cols = [col for col in df_combined.columns if col.startswith('bias_')]
+
+    # Calculate differences for RMSE columns
+    for rmse_col in all_rmse_cols:
+        if rmse_col != baseline_rmse_col:
+            # Extract the suffix after 'rmse_'
+            suffix = rmse_col[5:]  # Remove 'rmse_' prefix
+            diff_col_name = f'drmse_{suffix}'
+            df_combined[diff_col_name] = df_combined[rmse_col] - df_combined[baseline_rmse_col]
+            print(f"  Created {diff_col_name} = {rmse_col} - {baseline_rmse_col}")
+
+    # Calculate differences for bias columns
+    for bias_col in all_bias_cols:
+        if bias_col != baseline_bias_col:
+            # Extract the suffix after 'bias_'
+            suffix = bias_col[5:]  # Remove 'bias_' prefix
+            diff_col_name = f'dbias_{suffix}'
+            df_combined[diff_col_name] = df_combined[bias_col] - df_combined[baseline_bias_col]
+            print(f"  Created {diff_col_name} = {bias_col} - {baseline_bias_col}")
+
 # Save the combined dataframe
 output_path = 'combined_results.csv'
 df_combined.to_csv(output_path, index=False)
