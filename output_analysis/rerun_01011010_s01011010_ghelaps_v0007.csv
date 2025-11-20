@@ -1,7 +1,0 @@
-site,latitude,longitude,output_years,bias,rmse,mean_snotel_swe,var_snotel_swe
-Beaver Pass,48.88,-121.26,18.0,-79.3,161.7,357.4,165875.7
-Mosquito Ridge,48.06,-116.23,30.0,-73.7,156.1,308.1,129027.1
-Deadwood Summit,44.54,-115.56,30.0,-2.2,75.2,392.8,194158.5
-Schweitzer Basin,48.37,-116.64,21.0,-27.7,95.6,315.5,122769.1
-Indian Creek,42.3,-110.68,7.2,4.9,64.8,180.2,29860.3
-Upper San Juan,37.49,-106.84,30.0,164.1,300.7,250.5,103355.9
