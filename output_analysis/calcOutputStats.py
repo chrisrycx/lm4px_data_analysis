@@ -94,8 +94,8 @@ for site in sites:
         bias = None
 
     # Calculate the number of "model snow days" and "snotel snow days" where SWE > 5mm
-    model_snow_days = (snow_data['snow'] > 5).count() if not snow_data.empty else 0
-    snotel_snow_days = (snow_data['swe_mm'] > 5).count() if not snow_data.empty else 0
+    model_snow_days = snow_data.loc[snow_data['snow'] > 5, 'snow'].count() if not snow_data.empty else 0
+    snotel_snow_days = snow_data.loc[snow_data['swe_mm'] > 5, 'swe_mm'].count() if not snow_data.empty else 0
 
     # Append results to the list
     results_list.append({
