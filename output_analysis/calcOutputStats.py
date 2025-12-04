@@ -1,5 +1,5 @@
 '''
-Calculate the Root Mean Square Error (RMSE) and bias for model outputs against snotel data.
+Calculate the Root Mean Square Error (RMSE), bias, and other statistics for model outputs against snotel data.
 -- Input path to list of sites and output folder code such as 's00000000_gbc_v0.2.1'
 -- Output is a CSV file with RMSE and bias values for each site.
 
@@ -93,6 +93,10 @@ for site in sites:
         rmse = None
         bias = None
 
+    # Calculate the number of "model snow days" and "snotel snow days" where SWE > 5mm
+    model_snow_days = (snow_data['snow'] > 5).count() if not snow_data.empty else 0
+    snotel_snow_days = (snow_data['swe_mm'] > 5).count() if not snow_data.empty else 0
+
     # Append results to the list
     results_list.append({
         'site': site,
@@ -101,6 +105,8 @@ for site in sites:
         'output_years': round(num_years, 1),
         'bias': round(bias, 1) if bias is not None else None,
         'rmse': round(rmse, 1) if rmse is not None else None,
+        'model_snow_days': model_snow_days,
+        'snotel_snow_days': snotel_snow_days,
         'mean_snotel_swe': round(mean_snotel_swe, 1) if mean_snotel_swe is not None else None,
         'var_snotel_swe': round(var_snotel_swe, 1) if var_snotel_swe is not None else None
     })
