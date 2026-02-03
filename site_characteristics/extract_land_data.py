@@ -21,8 +21,8 @@ snotel_data = snotel_data[['SNOTEL Name', 'SNOTEL Lat ()', 'SNOTEL Lon ()']]
 unique_coords = snotel_data[['SNOTEL Lat ()', 'SNOTEL Lon ()']].drop_duplicates()
 
 # Extract data from ESM1k land datasets
-datasets = ['ELEVATION', 'SLOPE', 'ASPECT', 'SKY_VIEW_FACTOR', 'TERRAIN_CONFIG']
-dataset_decimals = [0,0,0,2,2]  # Decimal places for each dataset
+datasets = ['ELEVATION', 'SLOPE', 'ASPECT', 'SKY_VIEW_FACTOR', 'TERRAIN_CONFIG', 'STDEV_ELEV']
+dataset_decimals = [0,1,1,4,4,4]  # Decimal places for each dataset
 for dataset, decimals in zip(datasets, dataset_decimals):
     netcdf_file = os.path.join(ESM1K_PATH, f"{dataset}_1k_c230606.nc")
     ds = xr.open_dataset(netcdf_file)
