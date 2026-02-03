@@ -25,7 +25,7 @@ unique_coords = snotel_data[['SNOTEL Lat ()', 'SNOTEL Lon ()']].drop_duplicates(
 print(f"Processing {len(unique_coords)} unique coordinate pairs...")
 
 # Extract data from ESM1k land datasets
-datasets = ['ELEVATION', 'SLOPE', 'ASPECT', 'SKY_VIEW_FACTOR', 'TERRAIN_CONFIG', 'STDEV_ELEV']
+datasets = ['ELEVATION', 'SLOPE', 'ASPECT', 'SKY_VIEW_FACTOR', 'STDEV_ELEV']
 dataset_decimals = [0,1,1,4,4,4]  # Decimal places for each dataset
 
 print(f"\nExtracting data from {len(datasets)} datasets...")
@@ -58,6 +58,9 @@ for dataset, decimals in tqdm(zip(datasets, dataset_decimals), total=len(dataset
     # Round latitude and longitude values to 2 decimal places for consistency
     snotel_data['SNOTEL Lat ()'] = snotel_data['SNOTEL Lat ()'].round(2)
     snotel_data['SNOTEL Lon ()'] = snotel_data['SNOTEL Lon ()'].round(2)
+
+    # Just use relevant columns
+    subset_df = subset_df[['lat','lon',dataset]]
 
     subset_df['lat'] = subset_df['lat'].round(2)
     subset_df['lon'] = subset_df['lon'].round(2)
