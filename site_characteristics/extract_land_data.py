@@ -5,6 +5,8 @@ Extract data from ESM1k land datasets for SNOTEL station locations.
 import xarray as xr
 import pandas as pd
 import os
+from tqdm import tqdm
+import time
 
 # Load the SNOTEL summary CSV file
 SNOTEL_PATH = os.getenv('SNOTEL_PATH')
@@ -20,24 +22,40 @@ snotel_data = snotel_data[['SNOTEL Name', 'SNOTEL Lat ()', 'SNOTEL Lon ()']]
 # Extract unique latitudes and longitudes
 unique_coords = snotel_data[['SNOTEL Lat ()', 'SNOTEL Lon ()']].drop_duplicates()
 
+print(f"Processing {len(unique_coords)} unique coordinate pairs...")
+
 # Extract data from ESM1k land datasets
 datasets = ['ELEVATION', 'SLOPE', 'ASPECT', 'SKY_VIEW_FACTOR', 'TERRAIN_CONFIG', 'STDEV_ELEV']
 dataset_decimals = [0,1,1,4,4,4]  # Decimal places for each dataset
-for dataset, decimals in zip(datasets, dataset_decimals):
+
+print(f"\nExtracting data from {len(datasets)} datasets...")
+for dataset, decimals in tqdm(zip(datasets, dataset_decimals), total=len(datasets), desc="Overall Progress"):
+    print(f"\n  Processing {dataset}...")
+    start_time = time.time()
+
     netcdf_file = os.path.join(ESM1K_PATH, f"{dataset}_1k_c230606.nc")
-    ds = xr.open_dataset(netcdf_file)
+
+    # Open dataset with chunking for better performance
+    ds = xr.open_dataset(netcdf_file, chunks='auto')
 
     # Select the nearest data points for all unique coordinates
+    print(f"  Selecting {len(unique_coords)} coordinate pairs...")
     subset_ds = ds.sel(
         lat=xr.DataArray(unique_coords['SNOTEL Lat ()'], dims="points"),
         lon=xr.DataArray(unique_coords['SNOTEL Lon ()'], dims="points"),
         method="nearest"
     )
 
-    # Convert the subset dataset to a DataFrame for easier mapping
-    subset_df = subset_ds.to_dataframe().reset_index()
+    # Load data into memory and convert to DataFrame
+    print(f"  Loading data into memory...")
+    subset_df = subset_ds.load().to_dataframe().reset_index()
 
-    # Round latitude and longitude values to 4 decimal places for consistency
+    ds.close()
+
+    elapsed = time.time() - start_time
+    print(f"  Completed in {elapsed:.1f} seconds")
+
+    # Round latitude and longitude values to 2 decimal places for consistency
     snotel_data['SNOTEL Lat ()'] = snotel_data['SNOTEL Lat ()'].round(2)
     snotel_data['SNOTEL Lon ()'] = snotel_data['SNOTEL Lon ()'].round(2)
 
@@ -58,18 +76,17 @@ for dataset, decimals in zip(datasets, dataset_decimals):
     # Round the dataset values to the specified number of decimals
     snotel_data[dataset] = snotel_data[dataset].round(decimals)
 
-    ds.close()  # Close the dataset to free resources
-
 
 # Check if the merge was successful
+print("\n" + "="*60)
 print("Merged SNOTEL Data Sample:")
 print(snotel_data.head())
 
 # Save the data to a new CSV file
 output_file = os.path.join(SNOTEL_PATH, 'snotel_land_data.csv')
-# Round specific columns to the desired number of decimals before saving
 
-# Save the data to a new CSV file
+print(f"\nSaving results to {output_file}...")
 snotel_data.to_csv(output_file, index=False)
 
-print(f"SNOTEL land data saved to {output_file}")
+print(f"\nSUCCESS! SNOTEL land data saved to {output_file}")
+print(f"Processed {len(snotel_data)} stations with {len(datasets)} datasets")
