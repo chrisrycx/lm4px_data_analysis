@@ -75,20 +75,40 @@ print("\nValidating 'site' column consistency...")
 if 'site' not in common_cols:
     print("WARNING: 'site' column not found in common columns.")
 else:
-    first_sites = dfs[0]['site'].tolist()
+    first_sites = set(dfs[0]['site'].tolist())
     all_sites_match = True
+    site_differences = []
+
     for i, df in enumerate(dfs[1:], start=2):
-        current_sites = df['site'].tolist()
+        current_sites = set(df['site'].tolist())
         if current_sites != first_sites:
             print(f"ERROR in file {i} ({file_paths[i-1]}):")
             print(f"  'site' column values do not match file 1.")
+
+            # Find differences
+            missing_in_current = first_sites - current_sites
+            extra_in_current = current_sites - first_sites
+
+            if missing_in_current:
+                print(f"  Sites in file 1 but missing in file {i}: {sorted(missing_in_current)}")
+                site_differences.append((i, 'missing', missing_in_current))
+            if extra_in_current:
+                print(f"  Sites in file {i} but missing in file 1: {sorted(extra_in_current)}")
+                site_differences.append((i, 'extra', extra_in_current))
+
             all_sites_match = False
         else:
             print(f"✓ File {i} ({file_paths[i-1]}): 'site' column matches file 1")
 
     if not all_sites_match:
-        print("\nERROR: Not all files have the same 'site' column values. Please check your files.")
-        exit(1)
+        print("\nWARNING: Not all files have the same 'site' column values.")
+        print("See differences listed above.")
+        user_input = input("\nDo you want to proceed anyway? (y/n): ").strip().lower()
+        if user_input != 'y':
+            print("Exiting...")
+            exit(1)
+        else:
+            print("Proceeding with mismatched sites...")
 
 # Start with the first dataframe
 df_combined = dfs[0].copy()
