@@ -31,10 +31,16 @@ if not folder_code.startswith('s'):
     print("Folder code must start with 's'.")
     sys.exit(1)
 
+# Updated to handle ghelaps_veg namelist
 code_parts = folder_code.split('_')
 forcing_string = code_parts[0][1:]  # Remove the 's' prefix
-namelist = code_parts[1]
-version = code_parts[2][1:]
+if len(code_parts) > 3:
+    #Handle ghelaps_veg
+    namelist = code_parts[1] + '_' + code_parts[2]
+    version = code_parts[3][1:]
+else:
+    namelist = code_parts[1]
+    version = code_parts[2][1:]
 
 # Read the sites from the provided file, there should be one site per line
 with open(sites_file, 'r') as f:
