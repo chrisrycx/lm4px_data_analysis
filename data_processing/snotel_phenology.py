@@ -23,7 +23,11 @@ criteria.
 Set the SNOTEL_PATH environment variable before running.
 
 Usage:
-    python snotel_phenology.py [--site SITE] [--year-range START END]
+    Single site, verbose per-water-year tables:
+        python snotel_phenology.py --site SITE [--year-range START END]
+
+    Many sites, one summary row per site written to CSV:
+        python snotel_phenology.py --sites-file SITES.txt --output OUT.csv [--year-range START END]
 '''
 
 import argparse
@@ -32,8 +36,6 @@ import os
 import numpy as np
 import pandas as pd
 from model_datasets.snotel import PNNLSnotel
-
-SITE = 'Garita Peak'
 
 # Snow days parameters
 SWE_THRESHOLD_MM = 5.0      # SWE above this counts as a "snow day"
@@ -219,34 +221,48 @@ def filter_water_years(data: pd.DataFrame, year_range: tuple[int, int]) -> pd.Da
     return data.loc[(water_year >= start_wy) & (water_year <= end_wy)]
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Calculate snow days and peak SWE date per water year for a SNOTEL site.')
-    parser.add_argument('--site', default=SITE, help=f"SNOTEL site name (default: '{SITE}')")
-    parser.add_argument('--year-range', nargs=2, type=int, metavar=('START', 'END'), default=None,
-                         help='Restrict to water years START-END, inclusive (default: use all available data)')
-    return parser.parse_args()
+def summarize_site(
+    site: str,
+    snotel_path: str,
+    year_range: tuple[int, int] | None = None,
+) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
+    '''
+    Load one site's SNOTEL data and compute both phenology metrics.
 
-
-def main():
-    args = parse_args()
-    site = args.site
-
-    snotel_path = os.getenv('SNOTEL_PATH')
-    if not snotel_path:
-        raise SystemExit("SNOTEL_PATH environment variable is not set.")
-
+    Returns (summary, snow_day_results, peak_results): summary is a single dict with the fields
+    used for the multi-site CSV (site, avg_snow_days, avg_peak_swe, avg_peak_doy,
+    days_skipped_years, peak_skipped_years); the other two are the full per-water-year tables
+    from compute_snow_days / compute_peak_swe_date, for callers that want the detail (e.g. the
+    single-site verbose printout). avg_peak_doy is day-of-year (not a calendar date) so it can be
+    diffed directly against model output without date parsing.
+    '''
     snotel = PNNLSnotel(site, snotel_path)
     snotel.load_data()
 
     data = snotel.data
-    if args.year_range:
-        start_wy, end_wy = args.year_range
-        if start_wy > end_wy:
-            raise SystemExit(f"--year-range start ({start_wy}) must be <= end ({end_wy}).")
-        data = filter_water_years(data, args.year_range)
+    if year_range is not None:
+        data = filter_water_years(data, year_range)
 
     snow_day_results = compute_snow_days(data)
+    peak_results = compute_peak_swe_date(data)
 
+    avg_snow_days = snow_day_results.loc[snow_day_results['valid'], 'snow_days'].mean()
+    avg_peak_swe = peak_results.loc[peak_results['valid'], 'peak_swe'].mean()
+    avg_peak_doy = peak_results.loc[peak_results['valid'], 'peak_doy'].mean()
+
+    summary = {
+        'site': site,
+        'avg_snow_days': round(avg_snow_days, 1) if pd.notna(avg_snow_days) else None,
+        'avg_peak_swe': round(avg_peak_swe, 1) if pd.notna(avg_peak_swe) else None,
+        'avg_peak_doy': round(avg_peak_doy, 1) if pd.notna(avg_peak_doy) else None,
+        'days_skipped_years': int((~snow_day_results['valid']).sum()),
+        'peak_skipped_years': int((~peak_results['valid']).sum()),
+    }
+
+    return summary, snow_day_results, peak_results
+
+
+def print_verbose(site: str, snow_day_results: pd.DataFrame, peak_results: pd.DataFrame) -> None:
     n_valid = snow_day_results['valid'].sum()
     n_skipped = (~snow_day_results['valid']).sum()
     mean_snow_days = snow_day_results.loc[snow_day_results['valid'], 'snow_days'].mean()
@@ -254,8 +270,6 @@ def main():
     print(f"{site}: {n_valid} valid water years, {n_skipped} skipped (snow days)")
     print(f"Mean snow days per season: {mean_snow_days:.1f}")
     print(snow_day_results)
-
-    peak_results = compute_peak_swe_date(data)
 
     n_peak_valid = peak_results['valid'].sum()
     n_peak_skipped = (~peak_results['valid']).sum()
@@ -267,7 +281,54 @@ def main():
         print(f"Mean peak SWE DOY: {mean_peak_doy:.1f} (~{mean_peak_date.strftime('%b %d')})")
     print(peak_results)
 
-    return {'snow_days': snow_day_results, 'peak_swe': peak_results}
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='Calculate snow days and peak SWE date per water year for one or many SNOTEL sites.')
+    parser.add_argument('--site', default=None, help=f"Single SNOTEL site name, for verbose testing (ignored if --sites-file is given)")
+    parser.add_argument('--sites-file', default=None, help='Path to a text file of site names, one per line. Switches to batch mode: one summary row per site written to CSV.')
+    parser.add_argument('--output', default='snotel_phenology_summary.csv', help='CSV path for batch mode output (default: %(default)s)')
+    parser.add_argument('--year-range', nargs=2, type=int, metavar=('START', 'END'), default=None,
+                         help='Restrict to water years START-END, inclusive (default: use all available data)')
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    snotel_path = os.getenv('SNOTEL_PATH')
+    if not snotel_path:
+        raise SystemExit("SNOTEL_PATH environment variable is not set.")
+
+    year_range = None
+    if args.year_range:
+        start_wy, end_wy = args.year_range
+        if start_wy > end_wy:
+            raise SystemExit(f"--year-range start ({start_wy}) must be <= end ({end_wy}).")
+        year_range = (start_wy, end_wy)
+
+    if args.sites_file:
+        with open(args.sites_file) as f:
+            sites = [line.strip() for line in f if line.strip()]
+
+        summaries = []
+        for site in sites:
+            print(f'Processing site {site}')
+            try:
+                summary, _, _ = summarize_site(site, snotel_path, year_range)
+            except (ValueError, FileNotFoundError) as e:
+                print(f'  Skipping {site}: {e}')
+                continue
+            summaries.append(summary)
+
+        results = pd.DataFrame(summaries)
+        results.to_csv(args.output, index=False)
+        print(f'\nWrote {len(results)} sites to {args.output}')
+        return results
+
+    summary, snow_day_results, peak_results = summarize_site(args.site, snotel_path, year_range)
+    print_verbose(args.site, snow_day_results, peak_results)
+    print(f"\nSummary: {summary}")
+    return {'summary': summary, 'snow_days': snow_day_results, 'peak_swe': peak_results}
 
 
 if __name__ == '__main__':
