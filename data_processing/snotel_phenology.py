@@ -57,6 +57,7 @@ def compute_snow_days(
     max_gap_days: int = MAX_GAP_DAYS,
     max_gap_days_flat: int = MAX_GAP_DAYS_FLAT,
     max_gap_fraction: float = MAX_GAP_FRACTION,
+    min_run_days: int = 5,
 ) -> pd.DataFrame:
     '''
     Compute snow days per water year (Oct 1 - Sep 30) from a daily SWE series.
@@ -69,8 +70,12 @@ def compute_snow_days(
     window length. Otherwise gaps are linearly interpolated (time-based) before counting days
     with swe_col > threshold_mm.
 
-    Returns a DataFrame indexed by water_year with columns: valid, snow_days, max_gap_days,
-    missing_frac, n_window_days.
+    onset_doy is the calendar day-of-year of the first day of the first continuous run of
+    swe_col > threshold_mm lasting at least min_run_days days. meltout_doy is reserved for
+    the symmetric end-of-season calculation (currently NaN).
+
+    Returns a DataFrame indexed by water_year with columns: valid, snow_days, onset_doy,
+    meltout_doy, max_gap_days, missing_frac, n_window_days.
     '''
     full_swe = data[swe_col]
     df = data[[swe_col]].copy()
@@ -113,14 +118,33 @@ def compute_snow_days(
         valid = gaps_ok and (missing_frac <= max_gap_fraction)
 
         snow_days = np.nan
+        onset_doy = np.nan
+        meltout_doy = np.nan  # TODO: implement melt-out detection
         if valid:
             interpolated = swe.interpolate(method='time', limit=max_gap_days_flat, limit_area='inside')
             snow_days = int((interpolated > threshold_mm).sum())
+
+            above = interpolated > threshold_mm
+            run_id_above = (above != above.shift()).cumsum()
+            for _, run_group in above[above].groupby(run_id_above[above]):
+                if len(run_group) >= min_run_days:
+                    onset_doy = run_group.index[0].dayofyear
+                    break
+
+            #Switch direction for melt out
+            above_rev = above[::-1]
+            run_id_above_rev = (above_rev != above_rev.shift()).cumsum()
+            for _, run_group in above_rev[above_rev].groupby(run_id_above_rev[above_rev]):
+                if len(run_group) >= min_run_days:
+                    meltout_doy = run_group.index[0].dayofyear
+                    break
 
         records.append({
             'water_year': wy,
             'valid': valid,
             'snow_days': snow_days,
+            'onset_doy': onset_doy,
+            'meltout_doy': meltout_doy,
             'max_gap_days': longest_gap,
             'missing_frac': missing_frac,
             'n_window_days': n_window,

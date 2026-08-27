@@ -149,6 +149,9 @@ def process_site(
     avg_snow_days_model = model_snow.loc[matched_snow_years, 'snow_days'].mean()
     avg_snow_days_model_all = model_snow.loc[model_snow['valid'], 'snow_days'].mean()
 
+    avg_onset_doy_model_all = model_snow.loc[model_snow['valid'], 'onset_doy'].mean()
+    avg_meltout_doy_model_all = model_snow.loc[model_snow['valid'], 'meltout_doy'].mean()
+
     avg_peak_doy_snotel = snotel_peak.loc[snotel_peak['valid'], 'peak_doy'].mean()
     avg_peak_doy_model = model_peak.loc[matched_peak_years, 'peak_doy'].mean()
     avg_peak_doy_model_all = model_peak.loc[model_peak['valid'], 'peak_doy'].mean()
@@ -167,6 +170,8 @@ def process_site(
         'avg_snow_days_snotel': r(avg_snow_days_snotel),
         'avg_snow_days_model': r(avg_snow_days_model),
         'avg_snow_days_model_all': r(avg_snow_days_model_all),
+        'avg_onset_doy_model_all': r(avg_onset_doy_model_all),
+        'avg_meltout_doy_model_all': r(avg_meltout_doy_model_all),
         'n_matched_snow_years': int(len(matched_snow_years)),
         'n_snow_years_model': int(model_snow['valid'].sum()),
         'avg_peak_doy_snotel': r(avg_peak_doy_snotel),
