@@ -1,11 +1,17 @@
 '''
-Compare snow season length ("snow days") and peak SWE date/magnitude between SNOTEL
-observations and LM4 model output, for one or many sites.
+Compare snow season length ("snow days"), onset/meltout timing, and peak SWE date/magnitude
+between SNOTEL observations and LM4 model output, for one or many sites.
 
-Reuses the gap-screened snow days / peak SWE date calculations from
-data_processing/snotel_phenology.py so both datasets share identical thresholds and window
-definitions. Model output has no gaps, so those functions simply see missing_frac == 0 for every
-water year -- no separate no-gap logic is needed.
+Gap-screened snow days / onset / meltout / peak SWE date calculations were originally developed
+in the exploratory data_processing/snotel_phenology.py script; that script has been retired and
+the calculations now live here, self-contained. Model output has no gaps, so these functions
+simply see missing_frac == 0 for every water year -- no separate no-gap logic is needed.
+
+All *_wydoy fields (onset/meltout/peak timing) are day of water year, Oct 1 = day 1, rather than
+calendar day-of-year. The peak/onset/meltout search window (Oct-Jul) straddles the Jan 1
+boundary, so a year with e.g. a December onset (calendar DOY ~350) and a year with a January
+onset (calendar DOY ~15) would average to a meaningless calendar-DOY midpoint; anchoring every
+date to the water year it belongs to puts all years on one continuous, averaging-safe scale.
 
 Since SNOTEL sites can have individual water years skipped due to data gaps, but the model never
 does, each site's model average is computed twice: once over all of the model's own valid water
@@ -28,16 +34,236 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
 
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'data_processing'))
-
 import argparse
 
+import numpy as np
 import pandas as pd
 from model_datasets.output import LM4ModelOutput
 from model_datasets.snotel import PNNLSnotel
-from snotel_phenology import compute_peak_swe_date, compute_snow_days, filter_water_years
+
+# Snow days parameters
+SWE_THRESHOLD_MM = 5.0      # SWE above this counts as a "snow day"
+SNOW_WINDOW_MONTHS = [10, 11, 12, 1, 2, 3, 4, 5, 6, 7]  # Oct-Jul; Aug-Sep excluded (reliably snow-free)
+MAX_GAP_DAYS = 10           # longest single missing run that is safe to interpolate unconditionally
+MAX_GAP_DAYS_FLAT = 30      # longest gap allowed when it's bounded by below-threshold SWE on both sides
+MAX_GAP_FRACTION = 0.10     # total missing days allowed within the window, as a fraction of window length
+MIN_RUN_DAYS = 5            # min consecutive above-threshold days to count as an onset/meltout run
+
+# Peak SWE date parameters
+PEAK_GAP_MONTHS = [2, 3, 4, 5]  # Feb-May: where peak SWE is typically found
+PEAK_MAX_GAP_DAYS = 4            # max gap allowed if it overlaps PEAK_GAP_MONTHS, no flat-bounded exception
+
+
+def water_year_start(water_year: int, tz: str | None = None) -> pd.Timestamp:
+    '''Oct 1 immediately preceding the given water year (water year WY runs Oct 1 (WY-1) - Sep 30 WY).'''
+    ts = pd.Timestamp(year=water_year - 1, month=10, day=1)
+    return ts.tz_localize(tz) if tz is not None else ts
+
+
+def water_year_doy(date: pd.Timestamp, water_year: int) -> float:
+    '''Day of water year (Oct 1 = day 1) for a date, anchored to its own water_year label.'''
+    if pd.isna(date):
+        return np.nan
+    return (date - water_year_start(water_year, date.tz)).days + 1
+
+
+def filter_water_years(data: pd.DataFrame, year_range: tuple[int, int]) -> pd.DataFrame:
+    '''Restrict data to water years start_wy-end_wy, inclusive.'''
+    start_wy, end_wy = year_range
+    water_year = np.where(data.index.month >= 10, data.index.year + 1, data.index.year)
+    return data.loc[(water_year >= start_wy) & (water_year <= end_wy)]
+
+
+def compute_snow_days(
+    data: pd.DataFrame,
+    swe_col: str = 'swe_mm',
+    threshold_mm: float = SWE_THRESHOLD_MM,
+    window_months: list[int] = SNOW_WINDOW_MONTHS,
+    max_gap_days: int = MAX_GAP_DAYS,
+    max_gap_days_flat: int = MAX_GAP_DAYS_FLAT,
+    max_gap_fraction: float = MAX_GAP_FRACTION,
+    min_run_days: int = MIN_RUN_DAYS,
+) -> pd.DataFrame:
+    '''
+    Compute snow days, onset, and meltout per water year (Oct 1 - Sep 30) from a daily SWE series.
+
+    A gap is safe to interpolate if it is no longer than max_gap_days, or -- if longer -- it is
+    no longer than max_gap_days_flat AND the SWE values immediately bounding the gap are both
+    below threshold_mm (i.e. the gap sits in a snow-free stretch rather than spanning an
+    accumulation/melt transition). A water year is skipped (valid=False) if any gap fails both
+    checks, or if total missing days in the window exceed max_gap_fraction of the window length.
+    Otherwise gaps are linearly interpolated (time-based) before counting days with
+    swe_col > threshold_mm.
+
+    onset_wydoy is the day of water year of the first day of the first continuous run of
+    swe_col > threshold_mm lasting at least min_run_days days. meltout_wydoy is the day of water
+    year of the last day of the last such run.
+
+    Returns a DataFrame indexed by water_year with columns: valid, snow_days, onset_wydoy,
+    meltout_wydoy, max_gap_days, missing_frac, n_window_days.
+    '''
+    full_swe = data[swe_col]
+    df = data[[swe_col]].copy()
+    df['water_year'] = np.where(df.index.month >= 10, df.index.year + 1, df.index.year)
+    in_window = df.index.month.isin(window_months)
+
+    records = []
+    for wy, group in df[in_window].groupby('water_year'):
+        n_window = len(group)
+        swe = group[swe_col]
+        is_missing = swe.isna()
+        total_missing = int(is_missing.sum())
+        missing_frac = total_missing / n_window
+
+        longest_gap = 0
+        gaps_ok = True
+        if is_missing.any():
+            run_id = (is_missing != is_missing.shift()).cumsum()
+            for _, run_index in is_missing[is_missing].groupby(run_id[is_missing]).groups.items():
+                gap_len = len(run_index)
+                longest_gap = max(longest_gap, gap_len)
+
+                if gap_len <= max_gap_days:
+                    continue
+
+                # Longer gap: only acceptable if bounded by below-threshold SWE on both sides
+                start_pos = full_swe.index.get_loc(run_index.min())
+                end_pos = full_swe.index.get_loc(run_index.max())
+                before_val = full_swe.iloc[start_pos - 1] if start_pos > 0 else np.nan
+                after_val = full_swe.iloc[end_pos + 1] if end_pos + 1 < len(full_swe) else np.nan
+                flat_bounded = (
+                    pd.notna(before_val) and pd.notna(after_val)
+                    and before_val <= threshold_mm and after_val <= threshold_mm
+                )
+
+                if gap_len > max_gap_days_flat or not flat_bounded:
+                    gaps_ok = False
+                    break
+
+        valid = gaps_ok and (missing_frac <= max_gap_fraction)
+
+        snow_days = np.nan
+        onset_wydoy = np.nan
+        meltout_wydoy = np.nan
+        if valid:
+            interpolated = swe.interpolate(method='time', limit=max_gap_days_flat, limit_area='inside')
+            snow_days = int((interpolated > threshold_mm).sum())
+
+            above = interpolated > threshold_mm
+            run_id_above = (above != above.shift()).cumsum()
+            for _, run_group in above[above].groupby(run_id_above[above]):
+                if len(run_group) >= min_run_days:
+                    onset_wydoy = water_year_doy(run_group.index[0], wy)
+                    break
+
+            # Switch direction for melt out: scan backward from the end of the window so the
+            # first qualifying run found is the last one in real time.
+            above_rev = above[::-1]
+            run_id_above_rev = (above_rev != above_rev.shift()).cumsum()
+            for _, run_group in above_rev[above_rev].groupby(run_id_above_rev[above_rev]):
+                if len(run_group) >= min_run_days:
+                    meltout_wydoy = water_year_doy(run_group.index[0], wy)
+                    break
+
+        records.append({
+            'water_year': wy,
+            'valid': valid,
+            'snow_days': snow_days,
+            'onset_wydoy': onset_wydoy,
+            'meltout_wydoy': meltout_wydoy,
+            'max_gap_days': longest_gap,
+            'missing_frac': missing_frac,
+            'n_window_days': n_window,
+        })
+
+    return pd.DataFrame(records).set_index('water_year')
+
+
+def compute_peak_swe_date(
+    data: pd.DataFrame,
+    swe_col: str = 'swe_mm',
+    threshold_mm: float = SWE_THRESHOLD_MM,
+    window_months: list[int] = SNOW_WINDOW_MONTHS,
+    max_gap_days: int = MAX_GAP_DAYS,
+    max_gap_days_flat: int = MAX_GAP_DAYS_FLAT,
+    max_gap_fraction: float = MAX_GAP_FRACTION,
+    peak_gap_months: list[int] = PEAK_GAP_MONTHS,
+    peak_max_gap_days: int = PEAK_MAX_GAP_DAYS,
+) -> pd.DataFrame:
+    '''
+    Compute the date of peak SWE per water year (Oct 1 - Sep 30) from a daily SWE series.
+
+    Uses the same gap screening as compute_snow_days, plus a stricter check: any missing run
+    that overlaps peak_gap_months (Feb-May, where peak SWE is typically found) invalidates the
+    water year if it's longer than peak_max_gap_days -- the flat-bounded exception does not apply
+    here, since a gap during accumulation/peak season is unlikely to sit in a flat, snow-free
+    stretch. This guards against a gap swallowing the true peak or shifting the apparent peak
+    date. Gaps outside peak_gap_months still fall back to the standard max_gap_days /
+    max_gap_days_flat / max_gap_fraction rules.
+
+    Returns a DataFrame indexed by water_year with columns: valid, peak_date, peak_wydoy, peak_swe.
+    '''
+    full_swe = data[swe_col]
+    df = data[[swe_col]].copy()
+    df['water_year'] = np.where(df.index.month >= 10, df.index.year + 1, df.index.year)
+    in_window = df.index.month.isin(window_months)
+
+    records = []
+    for wy, group in df[in_window].groupby('water_year'):
+        n_window = len(group)
+        swe = group[swe_col]
+        is_missing = swe.isna()
+        missing_frac = int(is_missing.sum()) / n_window
+
+        gaps_ok = True
+        if is_missing.any():
+            run_id = (is_missing != is_missing.shift()).cumsum()
+            for _, run_index in is_missing[is_missing].groupby(run_id[is_missing]).groups.items():
+                gap_len = len(run_index)
+
+                if run_index.month.isin(peak_gap_months).any():
+                    if gap_len > peak_max_gap_days:
+                        gaps_ok = False
+                        break
+                    continue
+
+                if gap_len <= max_gap_days:
+                    continue
+
+                # Longer gap: only acceptable if bounded by below-threshold SWE on both sides
+                start_pos = full_swe.index.get_loc(run_index.min())
+                end_pos = full_swe.index.get_loc(run_index.max())
+                before_val = full_swe.iloc[start_pos - 1] if start_pos > 0 else np.nan
+                after_val = full_swe.iloc[end_pos + 1] if end_pos + 1 < len(full_swe) else np.nan
+                flat_bounded = (
+                    pd.notna(before_val) and pd.notna(after_val)
+                    and before_val <= threshold_mm and after_val <= threshold_mm
+                )
+
+                if gap_len > max_gap_days_flat or not flat_bounded:
+                    gaps_ok = False
+                    break
+
+        valid = gaps_ok and (missing_frac <= max_gap_fraction)
+
+        peak_date = pd.NaT
+        peak_swe = np.nan
+        peak_wydoy = np.nan
+        if valid:
+            interpolated = swe.interpolate(method='time', limit=max_gap_days_flat, limit_area='inside')
+            peak_date = interpolated.idxmax()
+            peak_swe = interpolated.loc[peak_date]
+            peak_wydoy = water_year_doy(peak_date, wy)
+
+        records.append({
+            'water_year': wy,
+            'valid': valid,
+            'peak_date': peak_date,
+            'peak_wydoy': peak_wydoy,
+            'peak_swe': peak_swe,
+        })
+
+    return pd.DataFrame(records).set_index('water_year')
 
 
 def parse_folder_code(folder_code: str) -> tuple[str, str, str]:
@@ -149,12 +375,12 @@ def process_site(
     avg_snow_days_model = model_snow.loc[matched_snow_years, 'snow_days'].mean()
     avg_snow_days_model_all = model_snow.loc[model_snow['valid'], 'snow_days'].mean()
 
-    avg_onset_doy_model_all = model_snow.loc[model_snow['valid'], 'onset_doy'].mean()
-    avg_meltout_doy_model_all = model_snow.loc[model_snow['valid'], 'meltout_doy'].mean()
+    avg_onset_wydoy_model_all = model_snow.loc[model_snow['valid'], 'onset_wydoy'].mean()
+    avg_meltout_wydoy_model_all = model_snow.loc[model_snow['valid'], 'meltout_wydoy'].mean()
 
-    avg_peak_doy_snotel = snotel_peak.loc[snotel_peak['valid'], 'peak_doy'].mean()
-    avg_peak_doy_model = model_peak.loc[matched_peak_years, 'peak_doy'].mean()
-    avg_peak_doy_model_all = model_peak.loc[model_peak['valid'], 'peak_doy'].mean()
+    avg_peak_wydoy_snotel = snotel_peak.loc[snotel_peak['valid'], 'peak_wydoy'].mean()
+    avg_peak_wydoy_model = model_peak.loc[matched_peak_years, 'peak_wydoy'].mean()
+    avg_peak_wydoy_model_all = model_peak.loc[model_peak['valid'], 'peak_wydoy'].mean()
 
     avg_peak_swe_snotel = snotel_peak.loc[snotel_peak['valid'], 'peak_swe'].mean()
     avg_peak_swe_model = model_peak.loc[matched_peak_years, 'peak_swe'].mean()
@@ -170,13 +396,13 @@ def process_site(
         'avg_snow_days_snotel': r(avg_snow_days_snotel),
         'avg_snow_days_model': r(avg_snow_days_model),
         'avg_snow_days_model_all': r(avg_snow_days_model_all),
-        'avg_onset_doy_model_all': r(avg_onset_doy_model_all),
-        'avg_meltout_doy_model_all': r(avg_meltout_doy_model_all),
+        'avg_onset_wydoy_model_all': r(avg_onset_wydoy_model_all),
+        'avg_meltout_wydoy_model_all': r(avg_meltout_wydoy_model_all),
         'n_matched_snow_years': int(len(matched_snow_years)),
         'n_snow_years_model': int(model_snow['valid'].sum()),
-        'avg_peak_doy_snotel': r(avg_peak_doy_snotel),
-        'avg_peak_doy_model': r(avg_peak_doy_model),
-        'avg_peak_doy_model_all': r(avg_peak_doy_model_all),
+        'avg_peak_wydoy_snotel': r(avg_peak_wydoy_snotel),
+        'avg_peak_wydoy_model': r(avg_peak_wydoy_model),
+        'avg_peak_wydoy_model_all': r(avg_peak_wydoy_model_all),
         'avg_peak_swe_snotel': r(avg_peak_swe_snotel),
         'avg_peak_swe_model': r(avg_peak_swe_model),
         'avg_peak_swe_model_all': r(avg_peak_swe_model_all),
