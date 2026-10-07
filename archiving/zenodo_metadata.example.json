@@ -1,0 +1,11 @@
+{
+  "upload_type": "dataset",
+  "title": "NLDAS forcing data at SNOTEL sites",
+  "creators": [
+    {"name": "Lastname, Firstname", "affiliation": "Institution", "orcid": "0000-0000-0000-0000"}
+  ],
+  "description": "<p>NLDAS meteorological forcing time series (NetCDF) extracted at SNOTEL sites. Files are grouped into zip archives by the first letter of the site name.</p>",
+  "access_right": "open",
+  "license": "cc-by-4.0",
+  "keywords": ["NLDAS", "SNOTEL", "snow", "meteorological forcing"]
+}
