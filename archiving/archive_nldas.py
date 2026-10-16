@@ -33,6 +33,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import zipfile
 from collections import defaultdict
 from datetime import datetime
@@ -123,6 +124,12 @@ def md5sum(path, chunk_size=2**20):
     return h.hexdigest()
 
 
+class ZenodoError(RuntimeError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 class ZenodoDeposition:
     """Minimal client for a single Zenodo deposition (draft record)."""
 
@@ -144,7 +151,8 @@ class ZenodoDeposition:
     def _request(self, method, url, timeout=(30, 300), **kwargs):
         r = self.session.request(method, url, timeout=timeout, **kwargs)
         if not r.ok:
-            raise RuntimeError(f"Zenodo {method} {url} failed ({r.status_code}): {r.text}")
+            raise ZenodoError(f"Zenodo {method} {url} failed ({r.status_code}): {r.text[:500]}",
+                              r.status_code)
         return r.json() if r.content else None
 
     def _load(self, data):
@@ -166,31 +174,51 @@ class ZenodoDeposition:
         files = self._request("GET", f"{self.url}/files")
         return {f["filename"]: (f["id"], f["checksum"]) for f in files}
 
-    def upload(self, path):
+    def upload(self, path, attempts=5, first_wait=60):
         """Upload path, skipping it if an identical file is already there.
 
-        A file with the same name but different contents is replaced.
+        A file with the same name but different contents is replaced. Server
+        errors (5xx) and dropped connections are retried, waiting first_wait
+        seconds and doubling each time; before each retry the deposition is
+        checked in case the file arrived despite the error.
         """
         local_md5 = md5sum(path)
-        existing = self.remote_files().get(path.name)
-        if existing:
-            file_id, remote_md5 = existing
-            if remote_md5 == local_md5:
-                print(f"    already on Zenodo (md5 matches), skipping upload")
-                return
-            print(f"    replacing existing {path.name} on Zenodo (md5 differs)")
-            self._request("DELETE", f"{self.url}/files/{file_id}")
+        wait = first_wait
+        for attempt in range(1, attempts + 1):
+            try:
+                existing = self.remote_files().get(path.name)
+                if existing:
+                    file_id, remote_md5 = existing
+                    if remote_md5.removeprefix("md5:") == local_md5:
+                        if attempt == 1:
+                            print(f"    already on Zenodo (md5 matches), skipping upload")
+                        else:
+                            print(f"    arrived on Zenodo despite the error (md5 matches)")
+                        return
+                    print(f"    replacing existing {path.name} on Zenodo (md5 differs)")
+                    self._request("DELETE", f"{self.url}/files/{file_id}")
 
-        print(f"    uploading to Zenodo deposition {self.id} ...")
-        with open(path, "rb") as f:
-            # No read timeout: large uploads can take a long time
-            data = self._request("PUT", f"{self.bucket_url}/{path.name}", data=f,
-                                 timeout=(30, None))
+                print(f"    uploading to Zenodo deposition {self.id} "
+                      f"(attempt {attempt}/{attempts}, {datetime.now():%H:%M:%S}) ...")
+                with open(path, "rb") as f:
+                    # No read timeout: large uploads can take a long time
+                    data = self._request("PUT", f"{self.bucket_url}/{path.name}", data=f,
+                                         timeout=(30, None))
+                break
+            except (ZenodoError, requests.ConnectionError, requests.Timeout) as e:
+                retryable = not isinstance(e, ZenodoError) or e.status >= 500
+                if not retryable or attempt == attempts:
+                    raise
+                print(f"    {type(e).__name__}: {str(e).splitlines()[0]}")
+                print(f"    retrying in {wait} s ({datetime.now():%H:%M:%S})")
+                time.sleep(wait)
+                wait *= 2
+
         remote_md5 = data["checksum"].removeprefix("md5:")
         if remote_md5 != local_md5:
             raise RuntimeError(f"Checksum mismatch after uploading {path.name}: "
                                f"local {local_md5}, Zenodo {remote_md5}")
-        print(f"    uploaded (md5 {local_md5})")
+        print(f"    uploaded (md5 {local_md5}, {datetime.now():%H:%M:%S})")
 
 
 def load_metadata(path):
