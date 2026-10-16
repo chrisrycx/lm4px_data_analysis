@@ -2,7 +2,9 @@
 
 Expects files named like ``NLDAS_<site>_<start>_<end>.nc`` (e.g.
 ``NLDAS_elkriver_19800101_20181002.nc``). Each zip holds every site whose
-name starts with the same letter, e.g. ``NLDAS_E.zip``. A site list
+name starts with the same letter, e.g. ``NLDAS_E.zip``; letters with more
+than --max-group-mb of data are split into ``NLDAS_E1.zip``, ``NLDAS_E2.zip``,
+... because Zenodo fails on large single uploads. A site list
 (``NLDAS_site_list.txt``) giving each site's date range and archive is
 uploaded after all the zips.
 
@@ -81,6 +83,33 @@ def group_files(input_dir, pattern):
             continue
         groups[group_key(parsed[0])].append(path)
     return groups, skipped
+
+
+def split_groups(groups, max_mb):
+    """Split any group over max_mb (uncompressed) into numbered parts, e.g. B -> B1, B2.
+
+    Groups under the limit keep their plain key. Parts are balanced so each is
+    roughly the same size; a single file larger than max_mb gets a part to itself.
+    """
+    split = {}
+    for key, files in groups.items():
+        sizes = [f.stat().st_size for f in files]
+        total = sum(sizes)
+        n = -(-total // int(max_mb * 1e6))  # ceiling division
+        if n <= 1:
+            split[key] = files
+            continue
+        # Put each file in the part its midpoint falls in along the cumulative size
+        parts = [[] for _ in range(n)]
+        done = 0
+        for f, size in zip(files, sizes):
+            parts[min(int((done + size / 2) * n / total), n - 1)].append(f)
+            done += size
+        parts = [p for p in parts if p]  # a very large file can leave a part empty
+        width = len(str(len(parts)))  # zero-pad so B01..B12 sort correctly
+        for i, part in enumerate(parts, 1):
+            split[f"{key}{i:0{width}d}"] = part
+    return split
 
 
 def site_list_text(groups, prefix):
@@ -239,6 +268,10 @@ def main():
     parser.add_argument("--tmp-dir", type=Path,
                         help="Where to write each zip before uploading (default: system temp dir). "
                              "Needs room for the largest zip.")
+    parser.add_argument("--max-group-mb", type=float, default=300,
+                        help="Split letter groups larger than this many MB (uncompressed) into "
+                             "numbered zips, e.g. NLDAS_B1.zip, NLDAS_B2.zip (default: %(default)s; "
+                             "0 disables splitting). Zenodo rejects large single uploads.")
     parser.add_argument("--limit", type=int,
                         help="Only build the first N archives (default: 3 with --sandbox, otherwise all)")
     parser.add_argument("--dry-run", action="store_true",
@@ -260,6 +293,13 @@ def main():
         sys.exit(f"No files matching {args.pattern} in {args.input_dir}")
     for path in skipped:
         print(f"Skipping (unexpected filename): {path.name}")
+
+    if args.max_group_mb:
+        groups = split_groups(groups, args.max_group_mb)
+    # Zenodo allows at most 100 files per record: every zip plus the site list
+    if len(groups) + 1 > 100:
+        sys.exit(f"{len(groups)} archives plus the site list exceeds Zenodo's 100-file limit; "
+                 "raise --max-group-mb")
 
     limit = args.limit if args.limit is not None else (3 if args.sandbox else None)
     if limit is not None and limit < len(groups):
@@ -318,6 +358,11 @@ def main():
     total = sum(len(v) for v in groups.values())
     print(f"Done: {total} files in {len(groups)} archives")
     if deposition:
+        expected = {f"{args.prefix}{key}.zip" for key in groups} | {list_name}
+        extra = sorted(set(deposition.remote_files()) - expected)
+        if extra:
+            print(f"Warning: the draft also holds files not from this run: {', '.join(extra)}")
+            print("    (e.g. left from an earlier grouping) -- delete them on Zenodo if unwanted.")
         print(f"Zenodo draft (not published): {deposition.html_url}")
         print("Review the record on Zenodo and publish it there when ready.")
 
